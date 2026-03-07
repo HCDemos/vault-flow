@@ -1,0 +1,18 @@
+# Local development — uses a sample audit log you supply.
+#
+# Usage:
+#   # Generate some events first (see README "Generating sample events")
+#   docker compose -f docker-compose.dev.yml up --build
+#   open http://localhost:9000
+
+services:
+  vault-flow:
+    build: .
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./sample-audit.log:/vault/audit.log:ro
+      - ./static:/app/static:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - HISTORY_LIMIT=200

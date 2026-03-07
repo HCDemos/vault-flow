@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vault Flow Monitor</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0d1117;
+    --surface:  #161b22;
+    --border:   #21262d;
+    --text:     #c9d1d9;
+    --muted:    #adbac7;
+    --success:  #238636;
+    --denied:   #da3633;
+    --warning:  #9e6a03;
+    --n8n:      #3b82f6;
+    --claude-desktop: #f97316;
+    --claude-code:    #22c55e;
+    --chatgpt:  #ef4444;
+    --gemini:   #a855f7;
+    --internal: #334155;
+    --font: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+  }
+
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; }
+
+  /* ── Layout ─────────────────────────────────────────────────────────────── */
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 20px; background: var(--surface);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  header h1 { font-size: 14px; font-weight: 600; letter-spacing: 0.08em; color: #e6edf3; }
+  header .tag { font-size: 11px; color: var(--muted); }
+
+  .live-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #238636; flex-shrink: 0;
+    box-shadow: 0 0 6px #238636;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  .live-dot.disconnected { background: var(--denied); box-shadow: 0 0 6px var(--denied); animation: none; }
+
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+  .stat { font-size: 11px; color: var(--muted); }
+  .stat span { color: var(--text); font-weight: 600; }
+
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  /* ── Left panel: diagram + legend ───────────────────────────────────────── */
+  .left-panel {
+    width: 280px; flex-shrink: 0;
+    background: var(--surface); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow-y: auto;
+  }
+
+  .panel-title {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.12em;
+    color: var(--muted); text-transform: uppercase;
+    padding: 12px 16px 8px;
+  }
+
+  /* ── SVG Diagram ─────────────────────────────────────────────────────────── */
+  .diagram-wrap { padding: 8px 12px 4px; }
+
+  .flow-node {
+    transition: filter 0.15s ease;
+  }
+  .flow-node.active rect, .flow-node.active .node-box {
+    filter: drop-shadow(0 0 8px var(--node-glow, #3b82f6));
+    animation: node-glow 0.8s ease-out forwards;
+  }
+  @keyframes node-glow {
+    0%   { filter: drop-shadow(0 0 12px var(--node-glow, #3b82f6)); }
+    100% { filter: drop-shadow(0 0 4px var(--node-glow, #3b82f6)); }
+  }
+
+  /* ── Agent Legend ─────────────────────────────────────────────────────────── */
+  .legend { padding: 12px 16px; }
+  .legend-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .legend-name { color: var(--text); }
+  .legend-count { margin-left: auto; color: var(--muted); font-size: 11px; }
+
+  /* ── Session counter panel ───────────────────────────────────────────────── */
+  .session-stats { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 6px; }
+  .session-stat-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+  .session-stat-row span { color: var(--text); font-weight: 600; }
+
+  .divider { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+
+  /* ── Toggle ────────────────────────────────────────────────────────────────  */
+  .toggle-row { padding: 8px 16px; display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+  .toggle-row label { cursor: pointer; display: flex; align-items: center; gap: 6px; }
+  input[type=checkbox] { accent-color: var(--n8n); }
+
+  /* ── Right panel: event feed ─────────────────────────────────────────────── */
+  .right-panel { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+  .right-panel::-webkit-scrollbar { width: 6px; }
+  .right-panel::-webkit-scrollbar-track { background: transparent; }
+  .right-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); gap: 8px; }
+  .empty-state .icon { font-size: 32px; }
+
+  /* ── Event cards ──────────────────────────────────────────────────────────── */
+  .event-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    border-left: 3px solid var(--card-color, var(--muted));
+    padding: 10px 12px;
+    animation: slide-in 0.2s ease-out;
+    flex-shrink: 0;
+  }
+  @keyframes slide-in { from { opacity:0; transform: translateY(-4px); } to { opacity:1; transform: none; } }
+
+  .card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+  .agent-badge {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+    padding: 2px 6px; border-radius: 3px;
+    background: color-mix(in srgb, var(--card-color, #64748b) 20%, transparent);
+    color: var(--card-color, var(--text));
+  }
+  .event-type-label {
+    font-size: 11px; font-weight: 600; color: var(--text); letter-spacing: 0.04em;
+  }
+  .card-time { margin-left: auto; font-size: 10px; color: var(--muted); }
+
+  .card-detail { font-size: 12px; color: #c9d1d9; margin-bottom: 4px; word-break: break-all; }
+
+  .status-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  .badge {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+    padding: 2px 7px; border-radius: 3px; text-transform: uppercase;
+  }
+  .badge.success { background: color-mix(in srgb, #238636 25%, transparent); color: #3fb950; border: 1px solid #238636; }
+  .badge.denied  { background: color-mix(in srgb, #da3633 25%, transparent); color: #f85149; border: 1px solid #da3633; }
+  .badge.error   { background: color-mix(in srgb, #9e6a03 25%, transparent); color: #d29922; border: 1px solid #9e6a03; }
+
+  .policy-chip {
+    font-size: 10px; color: var(--muted);
+    padding: 2px 6px; border: 1px solid var(--border); border-radius: 3px;
+  }
+  .error-msg { font-size: 11px; color: #f85149; margin-top: 3px; }
+  .authorized-by { font-size: 10px; color: var(--muted); margin-top: 4px; }
+  .authorized-by .auth-sub { color: #7ee787; font-weight: 600; }
+
+  .internal-card { opacity: 0.4; }
+  .internal-card:hover { opacity: 0.8; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Header ── -->
+  <header>
+    <div class="live-dot" id="liveDot"></div>
+    <h1>VAULT&nbsp;FLOW&nbsp;MONITOR</h1>
+    <div class="tag">secure agent identity · real-time audit</div>
+    <div class="header-right">
+      <div class="stat">events <span id="totalEvents">0</span></div>
+      <div class="stat">auths <span id="totalAuths">0</span></div>
+      <div class="stat">certs <span id="totalCerts">0</span></div>
+      <div class="stat" id="deniedStat" style="display:none">
+        denied <span id="totalDenied" style="color:#f85149">0</span>
+      </div>
+      <div class="stat" id="connStatus" style="color:var(--muted)">connecting…</div>
+    </div>
+  </header>
+
+  <div class="main">
+
+    <!-- ── Left Panel ── -->
+    <div class="left-panel">
+      <div class="panel-title">Auth Flow</div>
+
+      <!-- SVG Diagram -->
+      <div class="diagram-wrap">
+        <svg viewBox="0 0 240 400" width="240" height="400" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L6,3 z" fill="#adbac7"/>
+            </marker>
+          </defs>
+
+          <!-- Connecting lines -->
+          <!-- Agent → Authentik (left branch) -->
+          <line x1="100" y1="54" x2="59" y2="94" stroke="#444d56" stroke-width="1.5" marker-end="url(#arr)"/>
+          <!-- Agent → SPIRE (right branch) -->
+          <line x1="140" y1="54" x2="181" y2="94" stroke="#444d56" stroke-width="1.5" marker-end="url(#arr)"/>
+          <!-- Authentik → Vault Auth -->
+          <line x1="59" y1="134" x2="88" y2="174" stroke="#444d56" stroke-width="1.5" marker-end="url(#arr)"/>
+          <!-- SPIRE → Vault Auth -->
+          <line x1="181" y1="134" x2="152" y2="174" stroke="#444d56" stroke-width="1.5" marker-end="url(#arr)"/>
+          <!-- Vault Auth → vault-mcp -->
+          <line x1="120" y1="214" x2="120" y2="254" stroke="#444d56" stroke-width="1.5" marker-end="url(#arr)"/>
+          <!-- vault-mcp → KV / PKI -->
+          <line x1="120" y1="294" x2="120" y2="334" stroke="#444d56" stroke-width="1.5" marker-end="url(#arr)"/>
+
+          <!-- Step labels -->
+          <text x="130" y="235" font-size="9" fill="#adbac7">3. X-Vault-Token</text>
+          <text x="130" y="315" font-size="9" fill="#adbac7">4. read / issue</text>
+
+          <!-- NODE: AI Agent -->
+          <g id="node-agent" class="flow-node" style="--node-glow:#94a3b8">
+            <rect x="20" y="14" width="200" height="40" rx="6" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+            <text x="120" y="32" font-size="10" fill="#adbac7" text-anchor="middle" font-family="monospace" font-weight="600" letter-spacing="1">AI AGENT</text>
+            <text id="node-agent-label" x="120" y="48" font-size="11" fill="#c9d1d9" text-anchor="middle" font-family="monospace">waiting…</text>
+          </g>
+
+          <!-- NODE: Authentik (left branch) -->
+          <g id="node-authentik" class="flow-node" style="--node-glow:#a78bfa">
+            <rect x="4" y="94" width="110" height="40" rx="6" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+            <text x="59" y="112" font-size="10" fill="#adbac7" text-anchor="middle" font-family="monospace" font-weight="600" letter-spacing="1">AUTHENTIK</text>
+            <text x="59" y="127" font-size="9" fill="#c9d1d9" text-anchor="middle" font-family="monospace">OIDC · RS256 JWT</text>
+          </g>
+
+          <!-- NODE: SPIRE (right branch) -->
+          <g id="node-spire" class="flow-node" style="--node-glow:#06b6d4">
+            <rect x="126" y="94" width="110" height="40" rx="6" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+            <text x="181" y="112" font-size="10" fill="#adbac7" text-anchor="middle" font-family="monospace" font-weight="600" letter-spacing="1">SPIRE</text>
+            <text x="181" y="127" font-size="9" fill="#c9d1d9" text-anchor="middle" font-family="monospace">SVID · JWT</text>
+          </g>
+
+          <!-- convergence label -->
+          <text x="120" y="163" font-size="9" fill="#adbac7" text-anchor="middle">2. exchange → token</text>
+
+          <!-- NODE: Vault Auth -->
+          <g id="node-vault-auth" class="flow-node" style="--node-glow:#f59e0b">
+            <rect x="20" y="174" width="200" height="40" rx="6" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+            <text x="120" y="192" font-size="10" fill="#adbac7" text-anchor="middle" font-family="monospace" font-weight="600" letter-spacing="1">VAULT AUTH</text>
+            <text x="120" y="207" font-size="9" fill="#c9d1d9" text-anchor="middle" font-family="monospace">JWT · SPIFFE · validate · TTL</text>
+          </g>
+
+          <!-- NODE: vault-mcp -->
+          <g id="node-vault-mcp" class="flow-node" style="--node-glow:#06b6d4">
+            <rect x="20" y="254" width="200" height="40" rx="6" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+            <text x="120" y="272" font-size="10" fill="#adbac7" text-anchor="middle" font-family="monospace" font-weight="600" letter-spacing="1">VAULT-MCP</text>
+            <text x="120" y="287" font-size="9" fill="#c9d1d9" text-anchor="middle" font-family="monospace">MCP tool layer</text>
+          </g>
+
+          <!-- NODE: KV / PKI -->
+          <g id="node-kv" class="flow-node" style="--node-glow:#22c55e">
+            <rect x="20" y="334" width="200" height="40" rx="6" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+            <text x="120" y="352" font-size="10" fill="#adbac7" text-anchor="middle" font-family="monospace" font-weight="600" letter-spacing="1">VAULT KV · PKI</text>
+            <text id="node-kv-status" x="120" y="367" font-size="9" fill="#c9d1d9" text-anchor="middle" font-family="monospace">secret/agents/…</text>
+          </g>
+        </svg>
+      </div>
+
+      <hr class="divider">
+
+      <!-- Agent Legend -->
+      <div class="panel-title">Agents</div>
+      <div class="legend" id="agentLegend">
+        <div class="legend-row"><div class="legend-dot" style="background:#3b82f6"></div><span class="legend-name">n8n</span><span class="legend-count" id="cnt-n8n">0</span></div>
+        <div class="legend-row"><div class="legend-dot" style="background:#22c55e"></div><span class="legend-name">claude-code</span><span class="legend-count" id="cnt-claude-code">0</span></div>
+        <div class="legend-row"><div class="legend-dot" style="background:#f97316"></div><span class="legend-name">claude-desktop</span><span class="legend-count" id="cnt-claude-desktop">0</span></div>
+        <div class="legend-row"><div class="legend-dot" style="background:#ef4444"></div><span class="legend-name">chatgpt</span><span class="legend-count" id="cnt-chatgpt">0</span></div>
+        <div class="legend-row"><div class="legend-dot" style="background:#a855f7"></div><span class="legend-name">gemini</span><span class="legend-count" id="cnt-gemini">0</span></div>
+        <div class="legend-row"><div class="legend-dot" style="background:#14b8a6"></div><span class="legend-name">python-agent</span><span class="legend-count" id="cnt-python-agent">0</span></div>
+      </div>
+
+      <hr class="divider">
+
+      <!-- Counters -->
+      <div class="session-stats">
+        <div class="session-stat-row">total events <span id="s-total">0</span></div>
+        <div class="session-stat-row">auths <span id="s-auths">0</span></div>
+        <div class="session-stat-row">secret reads ✅ <span id="s-reads">0</span></div>
+        <div class="session-stat-row">access denied ❌ <span id="s-denied" style="color:#f85149">0</span></div>
+      </div>
+
+      <hr class="divider">
+      <div class="toggle-row">
+        <label><input type="checkbox" id="showInternal"> show sys/mounts</label>
+      </div>
+      <div class="toggle-row">
+        <label><input type="checkbox" id="autoScroll" checked> auto-scroll</label>
+      </div>
+    </div>
+
+    <!-- ── Event Feed ── -->
+    <div class="right-panel" id="eventFeed">
+      <div class="empty-state" id="emptyState">
+        <div class="icon">🔒</div>
+        <div>Waiting for Vault activity…</div>
+        <div style="font-size:11px;color:var(--muted)">Authenticate an agent to see the flow</div>
+      </div>
+    </div>
+
+  </div><!-- .main -->
+</div><!-- .app -->
+
+<script>
+// ── State ───────────────────────────────────────────────────────────────────
+const counts = { total: 0, auths: 0, reads: 0, denied: 0, certs: 0 };
+const agentCounts = {};
+let showInternal = false;
+let autoScroll = true;
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function fmtTime(isoStr) {
+  if (!isoStr) return '';
+  try {
+    const d = new Date(isoStr);
+    return d.toLocaleTimeString('en-GB', { hour12: false });
+  } catch { return isoStr.slice(11, 19) || ''; }
+}
+
+function fmtPath(path) {
+  // Highlight the agent name in the path
+  return path.replace(/(agents\/)([^/]+)/, '$1<strong>$2</strong>');
+}
+
+// ── Diagram animation ────────────────────────────────────────────────────────
+function glowNode(id, color, duration = 1200) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.setProperty('--node-glow', color);
+  el.classList.add('active');
+  setTimeout(() => el.classList.remove('active'), duration);
+}
+
+function animateFlow(ev) {
+  const c = ev.color || '#94a3b8';
+
+  // Update agent node label
+  const agentLabel = document.getElementById('node-agent-label');
+  if (agentLabel && ev.agent) {
+    agentLabel.textContent = ev.agent;
+    agentLabel.style.fill = c;
+  }
+
+  if (ev.event_type === 'auth') {
+    glowNode('node-agent', c);
+    if (ev.auth_method === 'spire') {
+      setTimeout(() => glowNode('node-spire', '#06b6d4'), 200);
+    } else {
+      setTimeout(() => glowNode('node-authentik', '#a78bfa'), 200);
+    }
+    setTimeout(() => glowNode('node-vault-auth', '#f59e0b'), 500);
+  }
+  if (ev.event_type === 'read') {
+    glowNode('node-vault-mcp', '#06b6d4');
+    setTimeout(() => {
+      const kvStatus = document.getElementById('node-kv-status');
+      if (kvStatus) {
+        if (ev.status === 'denied') {
+          kvStatus.textContent = '❌ ACCESS DENIED';
+          kvStatus.style.fill = '#f85149';
+        } else {
+          kvStatus.textContent = '✅ ' + (ev.path || 'secret read');
+          kvStatus.style.fill = '#3fb950';
+        }
+        setTimeout(() => {
+          kvStatus.textContent = 'secret/agents/…';
+          kvStatus.style.fill = '#c9d1d9';
+        }, 3000);
+      }
+      glowNode('node-kv', ev.status === 'denied' ? '#ef4444' : '#22c55e');
+    }, 300);
+  }
+  if (ev.event_type === 'internal') {
+    glowNode('node-vault-mcp', '#06b6d4', 400);
+    setTimeout(() => glowNode('node-kv', '#334155', 400), 200);
+  }
+  if (ev.event_type === 'pki') {
+    glowNode('node-vault-mcp', '#eab308');
+    setTimeout(() => glowNode('node-vault-auth', '#eab308'), 300);
+  }
+}
+
+// ── Card builder ──────────────────────────────────────────────────────────────
+function buildCard(ev) {
+  const card = document.createElement('div');
+  const isInternal = ev.event_type === 'internal';
+
+  card.className = 'event-card' + (isInternal ? ' internal-card' : '');
+  if (isInternal && !showInternal) card.className += ' hidden';
+  card.dataset.type = ev.event_type;
+  card.style.setProperty('--card-color', ev.color || '#64748b');
+
+  const statusBadge = ev.status === 'success'
+    ? '<span class="badge success">✓ allowed</span>'
+    : ev.status === 'denied'
+    ? '<span class="badge denied">✗ denied</span>'
+    : ev.status === 'error'
+    ? '<span class="badge error">⚠ error</span>'
+    : '';
+
+  const policyChips = (ev.policies || [])
+    .map(p => `<span class="policy-chip">${p}</span>`)
+    .join('');
+
+  let typeLabel, detail;
+  if (ev.event_type === 'auth') {
+    typeLabel = ev.auth_method === 'spire' ? 'SPIRE AUTH' : 'JWT AUTH';
+    detail = ev.detail || '';
+  } else if (ev.event_type === 'read') {
+    typeLabel = (ev.operation || 'READ').toUpperCase();
+    detail = ev.path ? fmtPath(ev.path) : '';
+  } else if (ev.event_type === 'pki') {
+    typeLabel = 'PKI CERT';
+    detail = ev.detail || '';
+  } else {
+    typeLabel = 'INTERNAL';
+    detail = ev.path || '';
+  }
+
+  const authorizedByHtml = (ev.event_type === 'auth' && ev.authorized_by)
+    ? `<div class="authorized-by">👤 authorized by: <span class="auth-sub">${ev.authorized_by}</span></div>`
+    : '';
+
+  card.innerHTML = `
+    <div class="card-header">
+      <span class="agent-badge">${ev.agent || 'unknown'}</span>
+      <span class="event-type-label">${typeLabel}</span>
+      ${statusBadge}
+      <span class="card-time">${fmtTime(ev.timestamp)}</span>
+    </div>
+    <div class="card-detail">${detail}</div>
+    <div class="status-row">${policyChips}</div>
+    ${authorizedByHtml}
+    ${ev.error ? `<div class="error-msg">${ev.error}</div>` : ''}
+  `;
+  return card;
+}
+
+// ── Stats update ──────────────────────────────────────────────────────────────
+function updateStats(ev) {
+  counts.total++;
+  if (ev.event_type === 'auth') counts.auths++;
+  if (ev.event_type === 'pki') counts.certs++;
+  if (ev.event_type === 'read' && ev.status === 'success') counts.reads++;
+  if (ev.status === 'denied') counts.denied++;
+
+  if (ev.agent) {
+    agentCounts[ev.agent] = (agentCounts[ev.agent] || 0) + 1;
+    const el = document.getElementById(`cnt-${ev.agent}`);
+    if (el) el.textContent = agentCounts[ev.agent];
+  }
+
+  document.getElementById('totalEvents').textContent = counts.total;
+  document.getElementById('totalAuths').textContent = counts.auths;
+  document.getElementById('totalCerts').textContent = counts.certs;
+  document.getElementById('totalDenied').textContent = counts.denied;
+  document.getElementById('s-total').textContent = counts.total;
+  document.getElementById('s-auths').textContent = counts.auths;
+  document.getElementById('s-reads').textContent = counts.reads;
+  document.getElementById('s-denied').textContent = counts.denied;
+
+  if (counts.denied > 0) {
+    document.getElementById('deniedStat').style.display = '';
+  }
+}
+
+// ── Add event to feed ─────────────────────────────────────────────────────────
+function addEvent(ev) {
+  updateStats(ev);
+  animateFlow(ev);
+
+  const feed = document.getElementById('eventFeed');
+  const empty = document.getElementById('emptyState');
+  if (empty) empty.remove();
+
+  const card = buildCard(ev);
+  // Insert at top (newest first)
+  feed.insertBefore(card, feed.firstChild);
+
+  // Keep feed to 200 cards max
+  while (feed.children.length > 200) feed.removeChild(feed.lastChild);
+
+  if (autoScroll) feed.scrollTop = 0;
+}
+
+// ── Load history ──────────────────────────────────────────────────────────────
+async function loadHistory() {
+  try {
+    const r = await fetch('/history');
+    const data = await r.json();
+    if (data.events && data.events.length > 0) {
+      // Add oldest first so newest ends up on top
+      for (const ev of data.events) addEvent(ev);
+    }
+  } catch (e) {
+    console.warn('history load failed:', e);
+  }
+}
+
+// ── SSE connection ────────────────────────────────────────────────────────────
+function connect() {
+  const dot = document.getElementById('liveDot');
+  const status = document.getElementById('connStatus');
+
+  const es = new EventSource('/events');
+
+  es.onopen = () => {
+    dot.classList.remove('disconnected');
+    status.textContent = 'live';
+    status.style.color = '#3fb950';
+  };
+
+  es.onmessage = (e) => {
+    try {
+      const ev = JSON.parse(e.data);
+      addEvent(ev);
+    } catch (err) {
+      console.warn('parse error', err, e.data);
+    }
+  };
+
+  es.onerror = () => {
+    dot.classList.add('disconnected');
+    status.textContent = 'reconnecting…';
+    status.style.color = 'var(--muted)';
+    es.close();
+    setTimeout(connect, 3000);
+  };
+}
+
+// ── Toggle handlers ───────────────────────────────────────────────────────────
+document.getElementById('showInternal').addEventListener('change', (e) => {
+  showInternal = e.target.checked;
+  document.querySelectorAll('.internal-card').forEach(c => {
+    c.classList.toggle('hidden', !showInternal);
+  });
+});
+
+document.getElementById('autoScroll').addEventListener('change', (e) => {
+  autoScroll = e.target.checked;
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+loadHistory().then(connect);
+</script>
+</body>
+</html>

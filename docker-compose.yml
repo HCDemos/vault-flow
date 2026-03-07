@@ -1,0 +1,19 @@
+services:
+  vault-flow:
+    build: .
+    image: vault-flow:latest
+    container_name: vault-flow
+    restart: unless-stopped
+    ports:
+      - "${PORT:-9000}:9000"
+    volumes:
+      # Path to your Vault audit log on the host
+      - ${AUDIT_LOG_PATH:-/var/log/vault/audit.log}:/vault/audit.log:ro
+      # Static frontend — volume-mounted so UI changes apply without rebuild
+      - ./static:/app/static:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - AUDIT_LOG_PATH=/vault/audit.log
+      - HISTORY_LIMIT=200
+      # Comma-separated KV mount names to watch (default: secret)
+      # - KV_MOUNTS=secret,demo
