@@ -17,3 +17,10 @@ services:
       - HISTORY_LIMIT=200
       # Comma-separated KV mount names to watch (default: secret)
       # - KV_MOUNTS=secret,demo
+
+      # /ingest endpoint auth — choose ONE method or leave both blank for no auth.
+      # Bearer token (recommended for HCP Vault Dedicated):
+      # - INGEST_BEARER_TOKEN=change-me
+      # HTTP Basic auth:
+      # - INGEST_USERNAME=vault-flow
+      # - INGEST_PASSWORD=change-me

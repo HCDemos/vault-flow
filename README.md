@@ -166,22 +166,126 @@ INTERNAL_PATHS = {"sys/mounts", "sys/capabilities-self", "auth/token/lookup-self
 
 > The `static/` directory is volume-mounted, so changes to `index.html` take effect immediately without rebuilding the image.
 
+## HCP Vault Dedicated (HTTP push)
+
+HCP Vault Dedicated cannot write to a local file — it pushes audit logs to an
+HTTP endpoint. vault-flow's `/ingest` endpoint receives these pushes and streams
+them to the browser in real time, exactly like the local file path.
+
+### How it works
+
+```
+HCP Vault Dedicated
+  │  POST https://your-vault-flow-host/ingest
+  │  Body: NDJSON (one audit event per line)
+  ▼
+vault-flow /ingest
+  │  parse → _combined_queue → _broadcast
+  ▼
+SSE /events → browser (live diagram + event cards)
+```
+
+`/history` serves from an in-memory ring buffer (last `HISTORY_LIMIT` events)
+since there is no local file. The buffer resets on container restart.
+
+### Setup
+
+**1. Make vault-flow reachable from the internet**
+
+HCP Vault Dedicated is a managed cloud service — it needs to reach your
+`/ingest` endpoint over HTTPS. Options:
+
+- Put vault-flow behind a reverse proxy (Traefik, nginx) with a valid TLS cert
+- Use a tunnel for testing: `ngrok http 9000` → use the ngrok HTTPS URL
+
+**2. Set an auth token**
+
+Set `INGEST_BEARER_TOKEN` in your `.env` or `docker-compose.yml`:
+
+```bash
+INGEST_BEARER_TOKEN=your-secret-token-here
+```
+
+**3. Configure HCP Vault Dedicated**
+
+In the HCP portal → your cluster → **Audit Logs** → **Add log streaming**:
+
+| Field | Value |
+|---|---|
+| Provider | Generic HTTP Sink |
+| URI | `https://your-host/ingest` |
+| Method | POST |
+| Authentication Strategy | Bearer |
+| Token | your `INGEST_BEARER_TOKEN` value |
+| Encoding | NDJSON (recommended) |
+| Compression | optional — vault-flow handles gzip |
+
+Click **Save**. Logs typically start flowing within a few minutes (up to 20 min
+for full enablement per HCP docs).
+
+> **Note:** HCP Vault Dedicated only supports streaming to one HTTP endpoint at
+> a time. If you need to send logs elsewhere simultaneously, use a log aggregator
+> (e.g. Fluent Bit, Vector) as a fan-out proxy in front of vault-flow.
+
+### Testing /ingest manually
+
+```bash
+# NDJSON — simulate a JWT auth event
+curl -X POST http://localhost:9000/ingest \
+  -H "Content-Type: application/x-ndjson" \
+  -H "Authorization: Bearer your-secret-token-here" \
+  --data-binary '{"type":"response","time":"2026-01-01T10:00:00Z","request":{"path":"auth/jwt/login","operation":"update"},"auth":{"metadata":{"role":"claude-code"},"policies":["claude-code-agent"],"entity_id":"abc-123"},"error":null}'
+
+# JSON array — simulate two events at once
+curl -X POST http://localhost:9000/ingest \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-secret-token-here" \
+  -d '[
+    {"type":"response","time":"2026-01-01T10:01:00Z","request":{"path":"secret/data/agents/n8n/config","operation":"read"},"auth":{"metadata":{"role":"n8n"},"policies":["n8n-agent"],"entity_id":"def-456"},"error":null},
+    {"type":"response","time":"2026-01-01T10:02:00Z","request":{"path":"secret/data/agents/claude-code/config","operation":"read"},"auth":{"metadata":{"role":"n8n"},"policies":["n8n-agent"],"entity_id":"def-456"},"error":"1 error occurred: permission denied"}
+  ]'
+
+# Verify events appear
+curl http://localhost:9000/history | python3 -m json.tool
+```
+
+### Running without a local Vault audit log
+
+If you only have HCP Vault Dedicated (no local file), set `AUDIT_LOG_PATH` to a
+path that does not exist — vault-flow will skip file tailing and use `/ingest`
+as the sole event source:
+
+```yaml
+# docker-compose.yml
+environment:
+  - AUDIT_LOG_PATH=/nonexistent
+  - INGEST_BEARER_TOKEN=your-secret-token
+# Remove the audit log volume mount
+```
+
 ## Architecture
 
 ```
-Vault audit log (file device)
-        │
-        │  tail (seek to EOF, readline loop, 50ms poll)
-        ▼
-   app.py (FastAPI)
-        │
-        ├── GET /events  ── SSE stream ──► browser (EventSource)
-        │                                       │
-        └── GET /history ── JSON (last N) ──►  page load replay
-                                                │
-                                         buildCard() + animateFlow()
-                                                │
-                                         live SVG diagram + event feed
+Vault audit log (file)          HCP Vault Dedicated (HTTP push)
+        │                                    │
+        │  _run_file_tail()                  │  POST /ingest
+        │  readline loop, 50ms poll          │  JSON array or NDJSON
+        └──────────────┬─────────────────────┘
+                       │
+                _combined_queue (asyncio.Queue)
+                       │
+                _broadcast() task
+                       │ fan-out
+          ┌────────────┼────────────┐
+          ▼            ▼            ▼
+     client queue  client queue  client queue  (one per SSE connection)
+          │
+     GET /events ── SSE stream ──► browser (EventSource)
+     GET /history ── JSON ──────► page load replay
+                                       │
+                                buildCard() + animateFlow()
+                                       │
+                               live SVG diagram + event feed
 ```
 
 **Backend (`app.py`):**
