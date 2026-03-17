@@ -4,34 +4,7 @@ Real-time HashiCorp Vault audit log monitor with a live flow diagram and event f
 
 vault-flow tails your Vault audit log and displays every authentication, secret access, PKI certificate issuance, and access denial as it happens — with animated flow diagrams, per-agent colour coding, and a 200-event replay buffer on page load.
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ ● VAULT FLOW MONITOR   secure agent identity · real-time audit               │
-│                                    events 47  auths 12  certs 3  connecting… │
-├───────────────────┬──────────────────────────────────────────────────────────┤
-│  Auth Flow        │  claude-code    JWT AUTH                        14:03:21 │
-│                   │  policy: claude-code-agent                               │
-│  ┌─────────────┐  │  [claude-code-agent]                                     │
-│  │  AI AGENT   │  │                                                          │
-│  └──┬──────┬───┘  │  python-agent   SPIRE AUTH                     14:02:55 │
-│     │      │      │  policy: python-agent                                    │
-│ ┌───┴──┐ ┌─┴────┐ │  [python-agent]                                          │
-│ │AUTHN │ │SPIRE │ │                                                          │
-│ │OIDC  │ │SVID  │ │  claude-code    PKI CERT                        14:02:40 │
-│ └───┬──┘ └─┬────┘ │  CN=claude-code · role=claude-code                       │
-│     └──┬───┘      │  [claude-code-agent]                                     │
-│  ┌─────┴───────┐  │                                                          │
-│  │ VAULT AUTH  │  │  n8n            READ                            14:01:12 │
-│  │JWT·SPIFFE   │  │  agents/n8n/config                                       │
-│  └──────┬──────┘  │  [n8n-agent]                                             │
-│  ┌──────┴──────┐  │                                                          │
-│  │  VAULT-MCP  │  │  chatgpt        READ                   ✗ denied 13:58:44 │
-│  └──────┬──────┘  │  agents/claude-code/config                               │
-│  ┌──────┴──────┐  │  permission denied                                       │
-│  │ VAULT KV·PKI│  │                                                          │
-│  └─────────────┘  │                                                          │
-└───────────────────┴──────────────────────────────────────────────────────────┘
-```
+![vault-flow monitor — live with active agent events](vault-flow-monitor-lit-up.png)
 
 ## ✨ Features
 
