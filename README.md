@@ -1,4 +1,6 @@
-# 🔐 vault-flow
+# vault-flow
+
+AI agents need their own identity and their own secrets, and security teams need to see what those agents are doing. When an agent authenticates to Vault with its own role, every login, secret read, and certificate it requests lands in Vault's audit log. vault-flow turns that log into something you can watch: which agent did what, when, and whether Vault allowed it.
 
 Real-time HashiCorp Vault audit log monitor with a live flow diagram and event feed.
 
@@ -6,27 +8,27 @@ vault-flow tails your Vault audit log and displays every authentication, secret 
 
 ![vault-flow monitor — live with active agent events](vault-flow-monitor-lit-up.png)
 
-## ✨ Features
+## Features
 
-- 🗺️ **Live diagram** — SVG flow diagram animates with each event; JWT auth lights up Authentik (purple), SPIFFE auth lights up SPIRE (cyan), secret reads pulse through vault-mcp to KV, PKI issuances glow yellow
-- 🃏 **Event cards** — per-agent colour coding, policy chips, status badges (success / denied / error), timestamps
-- 📡 **SSE streaming** — no polling; browser receives events via Server-Sent Events as they hit the audit log
-- 🕐 **History replay** — last 200 events loaded on page open (configurable)
-- ☁️ **HCP Vault Dedicated** — `/ingest` endpoint receives HTTP-pushed logs from HCP, no file needed
-- 🪶 **Zero JS dependencies** — plain HTML/CSS/JS, no bundler, no framework
-- ⚙️ **Configurable** — agent colours, KV mounts, audit log path, history depth all via env vars
+- **Live diagram** — SVG flow diagram animates with each event; JWT auth lights up Authentik (purple), SPIFFE auth lights up SPIRE (cyan), secret reads pulse through vault-mcp to KV, PKI issuances glow yellow
+- **Event cards** — per-agent colour coding, policy chips, status badges (success / denied / error), timestamps
+- **SSE streaming** — no polling; browser receives events via Server-Sent Events as they hit the audit log
+- **History replay** — last 200 events loaded on page open (configurable)
+- **HCP Vault Dedicated** — `/ingest` endpoint receives HTTP-pushed logs from HCP, no file needed
+- **Zero JS dependencies** — plain HTML/CSS/JS, no bundler, no framework
+- **Configurable** — agent colours, KV mounts, audit log path, history depth all via env vars
 
-## 🚀 Quick start
+## Quick start
 
 ### Prerequisites
 
 - Docker + Docker Compose
-- HashiCorp Vault with **audit logging enabled** (see [Vault audit log setup](#-vault-audit-log-setup))
+- HashiCorp Vault with **audit logging enabled** (see [Vault audit log setup](#vault-audit-log-setup))
 
 ### 1. Clone
 
 ```bash
-git clone https://github.com/your-org/vault-flow.git
+git clone https://github.com/HCDemos/vault-flow.git
 cd vault-flow
 ```
 
@@ -51,7 +53,7 @@ docker compose up -d --build
 
 Open [http://localhost:9000](http://localhost:9000) and authenticate an agent to Vault — watch the events flow.
 
-## 📋 Vault audit log setup
+## Vault audit log setup
 
 vault-flow reads Vault's file audit device. Enable it if you haven't already:
 
@@ -69,9 +71,9 @@ volumes:
 
 Then set `AUDIT_LOG_PATH=/srv/vault/data/audit.log`.
 
-> **🔒 Privacy note:** Vault HMAC-hashes sensitive fields in the audit log (secret values, token contents, PKI `common_name`, `serial_number`). vault-flow only reads non-sensitive fields: paths, operation types, policies, timestamps, and auth metadata.
+> **Privacy note:** Vault HMAC-hashes sensitive fields in the audit log (secret values, token contents, PKI `common_name`, `serial_number`). vault-flow only reads non-sensitive fields: paths, operation types, policies, timestamps, and auth metadata.
 
-## ⚙️ Configuration
+## Configuration
 
 ### Environment variables
 
@@ -110,7 +112,7 @@ environment:
 
 Vault's internal housekeeping calls (`sys/mounts`, `sys/capabilities-self`, `auth/token/lookup-self`) are hidden by default and shown dimmed when the "show sys/mounts" toggle is on. To add more paths, edit `INTERNAL_PATHS` in `app.py`.
 
-## 🤖 Adding a new agent
+## Adding a new agent
 
 1. Create the Vault role (JWT or SPIFFE)
 2. Add the agent colour to `AGENT_COLORS` in `app.py` and rebuild:
@@ -126,9 +128,9 @@ Vault's internal housekeeping calls (`sys/mounts`, `sys/capabilities-self`, `aut
    </div>
    ```
 
-> 💡 The `static/` directory is volume-mounted, so changes to `index.html` take effect on browser refresh — no image rebuild needed.
+> The `static/` directory is volume-mounted, so changes to `index.html` take effect on browser refresh — no image rebuild needed.
 
-## ☁️ HCP Vault Dedicated (HTTP push)
+## HCP Vault Dedicated (HTTP push)
 
 HCP Vault Dedicated cannot write to a local file — it pushes audit logs to an HTTP endpoint you configure. vault-flow's `/ingest` endpoint receives these pushes and streams them to the browser in real time, exactly like the local file path.
 
@@ -149,21 +151,21 @@ SSE /events → browser (live diagram + event cards)
 
 ### Setup
 
-**1️⃣  Make vault-flow reachable from the internet**
+**1. Make vault-flow reachable from the internet**
 
 HCP Vault Dedicated is a managed cloud service — it needs to reach your `/ingest` endpoint over HTTPS. Options:
 
 - Put vault-flow behind a reverse proxy (Traefik, nginx) with a valid TLS cert
 - Use a tunnel for testing: `ngrok http 9000` → use the ngrok HTTPS URL
 
-**2️⃣  Set an auth token**
+**2. Set an auth token**
 
 ```bash
 # .env
 INGEST_BEARER_TOKEN=your-secret-token-here
 ```
 
-**3️⃣  Configure HCP Vault Dedicated**
+**3. Configure HCP Vault Dedicated**
 
 In the HCP portal → your cluster → **Audit Logs** → **Add log streaming**:
 
@@ -179,7 +181,7 @@ In the HCP portal → your cluster → **Audit Logs** → **Add log streaming**:
 
 Click **Save**. Logs typically start flowing within a few minutes (up to 20 min per HCP docs).
 
-> **⚠️ Note:** HCP Vault Dedicated only supports streaming to one HTTP endpoint at a time. If you need to fan out to multiple destinations, put a log aggregator (e.g. Fluent Bit, Vector) in front of vault-flow.
+> **Note:** HCP Vault Dedicated only supports streaming to one HTTP endpoint at a time. If you need to fan out to multiple destinations, put a log aggregator (e.g. Fluent Bit, Vector) in front of vault-flow.
 
 ### Testing `/ingest` manually
 
@@ -214,7 +216,7 @@ environment:
 # Remove the audit log volume mount
 ```
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 Vault audit log (file)          HCP Vault Dedicated (HTTP push)
@@ -259,7 +261,7 @@ Vault audit log (file)          HCP Vault Dedicated (HTTP push)
 | `$AUDIT_LOG_PATH` | `/vault/audit.log` | Vault audit log (read-only) |
 | `./static` | `/app/static` | Frontend HTML (live, no rebuild) |
 
-## 🛠️ Development
+## Development
 
 ### Editing the frontend
 
@@ -284,7 +286,7 @@ docker compose -f docker-compose.dev.yml up --build
 
 Open [http://localhost:9000](http://localhost:9000) — history loads immediately from the sample file.
 
-## 🔌 Vault auth method compatibility
+## Vault auth method compatibility
 
 | Auth method | Vault path | Event type | Notes |
 |---|---|---|---|
@@ -295,6 +297,6 @@ Open [http://localhost:9000](http://localhost:9000) — history loads immediatel
 
 Other auth methods (AppRole, TLS cert, AWS, etc.) are silently dropped. Open a PR or issue to add support.
 
-## 📄 License
+## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
